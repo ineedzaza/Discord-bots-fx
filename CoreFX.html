@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>CoreFX Video Editor</title>
+  <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.6/dist/ffmpeg.min.js"></script>
+  <style>
+    body { font-family: sans-serif; padding: 20px; }
+    video { width: 400px; margin-top: 20px; display:block; }
+    .control { margin: 10px 0; }
+    label { display:block; margin-bottom: 4px; }
+    input[type=range] { width: 300px; }
+  </style>
+</head>
+<body>
+  <h2>🎬 CoreFX - FFmpeg WASM Editor</h2>
+
+  <input type="file" id="uploader" accept="video/*" />
+
+  <div class="control">
+    <label>Hue (0–360)</label>
+    <input type="range" id="hue" min="0" max="360" value="0">
+  </div>
+
+  <div class="control">
+    <label>Saturation (0–3)</label>
+    <input type="range" id="saturation" min="0" max="3" step="0.1" value="1">
+  </div>
+
+  <div class="control">
+    <label>Negate</label>
+    <input type="checkbox" id="negate">
+  </div>
+
+  <div class="control">
+    <label>Pinch / Punch (fisheye-ball)</label>
+    <select id="pinch">
+      <option value="">None</option>
+      <option value="v360=input=fisheye:output=e">Fisheye</option>
+      <option value="v360=input=e:output=ball">Ball</option>
+    </select>
+  </div>
+
+  <div class="control">
+    <label>Swirl (0–360 degrees)</label>
+    <input type="range" id="swirl" min="0" max="360" value="0">
+  </div>
+
+  <div class="control">
+    <label>Mirror</label>
+    <select id="mirror">
+      <option value="">None</option>
+      <option value="hflip">Left-Right</option>
+      <option value="vflip">Top-Bottom</option>
+    </select>
+  </div>
+
+  <div class="control">
+    <label>LUT3D (.cube)</label>
+    <input type="file" id="lutfile" accept=".cube">
+  </div>
+
+  <div class="control">
+    <label>Audio Pitch (semitones -12 to +12)</label>
+    <input type="range" id="pitch" min="-12" max="12" value="0">
+  </div>
+
+  <div class="control">
+    <label>Volume (0–100 %)</label>
+    <input type="range" id="volume" min="0" max="100" value="100">
+  </div>
+
+  <div class="control">
+    <label>Vibrato Frequency (0–100000)</label>
+    <input type="range" id="vibrato" min="0" max="100000" value="0">
+  </div>
+
+  <button id="processBtn">Apply Effects</button>
+
+  <video id="outputVideo" controls></video>
+
+  <script>
+    const { createFFmpeg, fetchFile } = FFmpeg;
+    const ffmpeg = createFFmpeg({ log: true });
+
+    function buildFilters() {
+      let filters = [];
+
+      // hue/saturation
+      const hue = document.getElementById("hue").value;
+      const sat = document.getElementById("saturation").value;
+      if (hue != 0 || sat != 1) {
+        filters.push(`huesaturation=h=${hue}:s=${sat}`);
+      }
+
+      // negate
+      if (document.getElementById("negate").checked) {
+        filters.push("negate");
+      }
+
+      // pinch/punch
+      const pinch = document.getElementById("pinch").value;
+      if (pinch) filters.push(pinch);
+
+      // swirl
+      const swirl = document.getElementById("swirl").value;
+      if (swirl != 0) {
+        filters.push(`swirl=${swirl}`);
+      }
+
+      // mirror
+      const mirror = document.getElementById("mirror").value;
+      if (mirror) filters.push(mirror);
+
+      // LUT
+      const lutfile = document.getElementById("lutfile").files[0];
+      if (lutfile) {
+        filters.push("lut3d=lut.cube");
+      }
+
+      return filters.length ? filters.join(",") : null;
+    }
+
+    function buildAudioFilters() {
+      let af = [];
+
+      // pitch
+      const pitch = parseInt(document.getElementById("pitch").value);
+      if (pitch !== 0) {
+        const factor = Math.pow(2, pitch / 12); 
+        af.push(`asetrate=44100*${factor},aresample=44100,atempo=1/${factor}`);
+      }
+
+      // volume
+      const vol = document.getElementById("volume").value;
+      if (vol != 100) {
+        af.push(`volume=${vol/100}`);
+      }
+
+      // vibrato
+      const vib = document.getElementById("vibrato").value;
+      if (vib != 0) {
+        af.push(`vibrato=f=${vib}`);
+      }
+
+      return af.length ? af.join(",") : null;
+    }
+
+    document.getElementById("processBtn").onclick = async () => {
+      if (!ffmpeg.isLoaded()) await ffmpeg.load();
+
+      const fileInput = document.getElementById("uploader");
+      if (fileInput.files.length === 0) {
+        alert("Upload a video first!");
+        return;
+      }
+      const file = fileInput.files[0];
+      const inputName = "input.mp4";
+      const outputName = "output.mp4";
+
+      ffmpeg.FS("writeFile", inputName, await fetchFile(file));
+
+      // if LUT file exists
+      const lutfile = document.getElementById("lutfile").files[0];
+      if (lutfile) {
+        ffmpeg.FS("writeFile", "lut.cube", await fetchFile(lutfile));
+      }
+
+      // Build filters
+      const vf = buildFilters();
+      const af = buildAudioFilters();
+
+      let cmd = ["-i", inputName];
+      if (vf) { cmd.push("-vf", vf); }
+      if (af) { cmd.push("-af", af); }
+      cmd.push(outputName);
+
+      await ffmpeg.run(...cmd);
+
+      const data = ffmpeg.FS("readFile", outputName);
+      const videoURL = URL.createObjectURL(new Blob([data.buffer], { type: "video/mp4" }));
+      document.getElementById("outputVideo").src = videoURL;
+    };
+  </script>
+</body>
+</html>
